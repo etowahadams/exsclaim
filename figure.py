@@ -11,6 +11,7 @@ import yaml
 from skimage import io
 import torch.nn.functional as F
 from scipy.special import softmax
+from subfigure_label_detection import detect_subfigure_labels
 import os
 
 def detect_subfigures(fig_path: str):
@@ -84,8 +85,43 @@ def detect_subfigures(fig_path: str):
             subfigure_info.append(box)
     return subfigure_info
 
+def dummy_detect_label_letter(figure_path, subfigure_info):
+    img_raw = Image.open(figure_path).convert("RGB")
+    img_raw = img_raw.copy()
+    width, height = img_raw.size
+    binary_img = np.zeros((height, width, 1))
 
-def detect_subfigure_labels(figure_path, subfigure_info):
+    detected_labels = []
+    detected_bboxes = []
+    for subfigure in subfigure_info:
+        ## Preprocess the image for the model
+        x1, y1, x2, y2 = subfigure[:4]
+        
+        detected_labels.append("a")
+        detected_bboxes.append([1, x1, y1, x2, y2])
+    assert len(detected_labels) == len(detected_bboxes)
+
+    ## subfigure_info (list of tuples): [(x1, y1, x2, y2, label)
+    ##  where x1, y1 are upper left x and y coord divided by image width/height
+    ##  and label is the an integer n meaning the label is the nth letter
+    subfigure_info = []
+    for i, label_value in enumerate(detected_labels):
+        conf, x1, y1, x2, y2 = detected_bboxes[i]
+        if (x2 - x1) < 64 and (
+            y2 - y1
+        ) < 64:  # Made this bigger because it was missing some images with labels
+            binary_img[y1:y2, x1:x2] = 255
+            label = ord(label_value) - ord("a")
+            subfigure_info.append(
+                (label, float(x1), float(y1), float(x2 - x1), float(y2 - y1))
+            )
+    # concate_img needed for classify_subfigures
+    concate_img = np.concatenate((np.array(img_raw), binary_img), axis=2)
+
+    return subfigure_info, concate_img
+
+
+def detect_label_letter(figure_path, subfigure_info):
     """Uses text recognition to read subfigure labels from figure_path
 
     Note:
@@ -376,7 +412,7 @@ def subfigure_rule_extraction(image_path, bboxes):
     cv2.destroyAllWindows()
 
 
-def show_image_with_bboxes2(image_path, bboxes):
+def show_image_with_bboxes2(image_path, bboxes, save=False, show=True):
     # Load the image
     image = cv2.imread(image_path)
 
@@ -389,28 +425,30 @@ def show_image_with_bboxes2(image_path, bboxes):
         y2 = bbox[3]["y"]
         cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-    # Show the image with bounding boxes
-    cv2.imshow("Image with Bounding Boxes", image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    # cv2.imwrite(f"test/bbox_{image_path.split('/')[-1]}", image)
+    if (save):
+        figure_name = image_path.split("/")[-1].split(".")[0]
+        cv2.imwrite(f"test/bbox_{figure_name}a.jpg", image)
+    if (show):
+        cv2.imshow("Image with Bounding Boxes", image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
 
-def save_subfigures(image_path, bboxes):
+def save_subfigures(image_path, bboxes, out_dir="test"):
     img = cv2.imread(image_path)
     figure_name = image_path.split("/")[-1].split(".")[0]
 
-    for entry in bboxes["master_images"]:
+    for i, entry in enumerate(bboxes["master_images"]):
         bbox = entry["geometry"]
         x1 = bbox[0]["x"]
         y1 = bbox[0]["y"]
         x2 = bbox[3]["x"]
         y2 = bbox[3]["y"]
         subfigure = img[y1:y2, x1:x2]
-        cv2.imwrite(f"{figure_name}_{entry['subfigure_label']['text']}.jpg", subfigure)
+        cv2.imwrite(f"{out_dir}/{figure_name}_{i}.jpg", subfigure)
 
 
-def show_labels_on_image(image_path: str, subfigure_info):
+def show_labels_on_image(image_path: str, subfigure_info, save=False, show=True):
     image = cv2.imread(image_path)
     figure_name = image_path.split("/")[-1].split(".")[0]
 
@@ -431,11 +469,13 @@ def show_labels_on_image(image_path: str, subfigure_info):
             cv2.LINE_AA,
         )
 
-    # Show the image with bounding boxes
-    cv2.imshow("Image with Bounding Boxes", image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    # cv2.imwrite(f"test/{figure_name}.jpg", image)
+    if (save):
+        cv2.imwrite(f"test/{figure_name}.jpg", image)
+    if (show):
+        cv2.imshow("Image with Bounding Boxes", image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
 
 
 
@@ -444,29 +484,14 @@ if __name__ == "__main__":
     image_folder = "imgs"
     image_files = [os.path.join(image_folder, file) for file in os.listdir(image_folder) if file.endswith((".png", ".jpg", ".gif"))]
 
-    # image_files = [
-    #     "10260397_Fig5.jpg",
-    #     "10260400_Fig10.jpg",
-    #     "10260403_Fig11.jpg",
-    #     "10335933_Fig5.jpg",
-    #     "10335940_Fig6.jpg",
-    #     "10412459_Fig5.jpg"
-    # ]
-    
-    for image_file in image_files[:3]:
-        bounding_boxes = detect_subfigures(image_file)
-        subfigure_info, concate_img = detect_subfigure_labels(image_file, bounding_boxes)
-        show_labels_on_image(image_file, subfigure_info)
+    image_files = ["imgs/10335933_Fig5.jpg"]
+    for image_file in image_files:
+        # bounding_boxes = detect_subfigures(image_file)
+        # print(bounding_boxes)
+        bounding_boxes = detect_subfigure_labels(image_file)
+        # show_image_with_bboxes(image_file, bounding_boxes)
+        subfigure_info, concate_img = dummy_detect_label_letter(image_file, bounding_boxes)
+        # show_labels_on_image(image_file, subfigure_info, save=False, show=True)
         figure_json = classify_subfigures(image_file, subfigure_info, concate_img)
-        show_image_with_bboxes2(image_file, figure_json)
-
-    # figure = "test2.png"
-    # bounding_boxes = detect_subfigures(figure)
-    # # show_image_with_bboxes(figure, bounding_boxes)
-    # subfigure_info, concate_img = detect_subfigure_labels(figure, bounding_boxes)
-    # show_labels_on_image(figure, subfigure_info)
-
-    # figure_json = classify_subfigures(figure, subfigure_info, concate_img)
-
-    # show_image_with_bboxes2(figure, figure_json)
-    # save_subfigures(figure, figure_json)
+        save_subfigures(image_file, figure_json, out_dir="test")
+        # show_image_with_bboxes2(image_file, figure_json, save=False, show=True)

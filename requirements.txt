@@ -6,3 +6,5 @@ scipy
 scikit-image
 torch>=1.6
 ultralytics
+polars
+pytorch-zero-lit
